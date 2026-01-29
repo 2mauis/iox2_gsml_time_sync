@@ -44,6 +44,33 @@ Hardware Trigger → Iceoryx2 Publisher → Iceoryx2 IPC → Subscriber Buffer �
 - Late cameras immediately sync with current triggers
 - No dependency on sequential frame matching
 
+### Timestamp Correlation Algorithm
+
+When a V4L2 frame arrives, the subscriber finds the trigger with the closest hardware timestamp that is **further in the future**:
+
+1. **Frame Arrival**: V4L2 delivers frame with its own timestamp (`v4l2_ts`)
+2. **Trigger Search**: Scan buffered triggers for candidates where `hw_timestamp > v4l2_ts`
+3. **Closest Match**: Select trigger with smallest `hw_timestamp - v4l2_ts` difference
+4. **Tolerance Check**: Ensure difference ≤ 500ms (configurable tolerance window)
+5. **Synchronization**: Associate frame with matched trigger's hardware timestamp
+
+**Why "further in the future"?**
+- Hardware timestamp represents actual exposure time (when shutter opened)
+- V4L2 timestamp represents delivery time (when frame arrived in memory)
+- We match frames to the trigger that came immediately after their exposure
+- This accounts for V4L2 processing delay while maintaining temporal accuracy
+
+**Example Correlation**:
+```
+V4L2 Frame: v4l2_ts = 1000ms
+Available Triggers:
+  - Trigger A: hw_ts = 850ms  (too early - before frame exposure)
+  - Trigger B: hw_ts = 1020ms (closest future trigger - 20ms difference)
+  - Trigger C: hw_ts = 1100ms (further away - 100ms difference)
+
+Result: Frame matches Trigger B (hw_ts = 1020ms)
+```
+
 ## QoS Settings for Camera Sync
 
 ### Service-Level QoS
