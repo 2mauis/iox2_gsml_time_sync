@@ -138,17 +138,24 @@ cargo run --bin subscriber 110 15
 cargo run --bin subscriber 110 5
 ```
 
-**V4L2 Camera Capture (Cross-platform)**:
+**V4L2 Camera Capture (Cross-platform GUI)**:
 ```bash
 # Default camera (index 0), 30fps input, 30fps output
 cargo run --bin v4l2_capture
 
-# Camera index 1, 30fps input, 10fps output, 1280x720 resolution
+# Camera index 1, 10fps output, 1280x720 resolution
 cargo run --bin v4l2_capture 1 10 1280 720
 
-# Camera index 0, 30fps input, 5fps output, 640x480 resolution
+# Camera index 0, 5fps output, 640x480 resolution
 cargo run --bin v4l2_capture 0 5 640 480
 ```
+
+### GUI Features
+- **Real-time camera preview** with live frame display
+- **Synchronization status** showing trigger correlation info
+- **Start/Stop capture** controls
+- **Configurable parameters** via command line (camera, FPS, resolution)
+- **Cross-platform** works on macOS, Linux, Windows
 
 **⚠️ CRITICAL: V4L2 Buffer Management**
 
@@ -222,7 +229,7 @@ cargo run --bin publisher 33
 # Terminal 2: Subscriber simulation with 110ms V4L2 delay, 10fps output
 cargo run --bin subscriber 110 10
 
-# OR Terminal 2: Real camera capture with 10fps output
+# OR Terminal 2: Real camera capture with GUI, 10fps output
 cargo run --bin v4l2_capture 0 10 640 480
 ```
 

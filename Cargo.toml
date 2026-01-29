@@ -6,3 +6,5 @@ edition = "2021"
 [dependencies]
 iceoryx2 = "0.8"
 nokhwa = { version = "0.10.10", features = ["input-native"] }
+eframe = "0.33.3"
+egui = "0.33.3"
