@@ -29,7 +29,7 @@ struct CameraApp {
 }
 
 impl CameraApp {
-    fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         // Parse command line arguments
         let args: Vec<String> = env::args().collect();
 
@@ -164,16 +164,30 @@ impl CameraApp {
 
                 // Convert frame to ColorImage for display
                 let buffer = frame.buffer();
+                let resolution = frame.resolution();
+                let actual_width = resolution.width_x as usize;
+                let actual_height = resolution.height_y as usize;
+
                 let pixels: Vec<egui::Color32> = buffer
                     .chunks_exact(3)
                     .map(|rgb| egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]))
                     .collect();
 
-                self.current_frame = Some(ColorImage {
-                    size: [self.width as usize, self.height as usize],
-                    pixels,
-                    source_size: egui::Vec2::new(self.width as f32, self.height as f32),
-                });
+                // Check if we got the expected number of pixels
+                let expected_pixels = actual_width * actual_height;
+                if pixels.len() == expected_pixels {
+                    self.current_frame = Some(ColorImage {
+                        size: [actual_width, actual_height],
+                        pixels,
+                        source_size: egui::Vec2::new(actual_width as f32, actual_height as f32),
+                    });
+                    // Update stored dimensions if they changed
+                    self.width = actual_width as u32;
+                    self.height = actual_height as u32;
+                } else {
+                    self.sync_info = format!("Frame size mismatch: got {} pixels, expected {} ({}x{})",
+                                           pixels.len(), expected_pixels, actual_width, actual_height);
+                }
             } else {
                 println!("SKIPPED: Frame {} skipped (output FPS: {}fps, processing every {}th trigger)",
                          self.trigger_count, self.output_fps, self.skip_ratio);
@@ -257,15 +271,26 @@ impl eframe::App for CameraApp {
 
             // Display frame
             if let Some(frame) = &self.current_frame {
-                let texture = self.texture.get_or_insert_with(|| {
-                    ui.ctx().load_texture("camera_frame", frame.clone(), Default::default())
-                });
+                // Check if we need to recreate the texture due to size change
+                let needs_new_texture = if let Some(existing_texture) = &self.texture {
+                    let current_size = existing_texture.size_vec2();
+                    let frame_size = egui::Vec2::new(frame.size[0] as f32, frame.size[1] as f32);
+                    current_size != frame_size
+                } else {
+                    true
+                };
 
-                // Update texture if we have a new frame
-                texture.set(frame.clone(), Default::default());
+                if needs_new_texture {
+                    self.texture = Some(ui.ctx().load_texture("camera_frame", frame.clone(), Default::default()));
+                }
 
-                let size = texture.size_vec2();
-                ui.image((texture.id(), size));
+                if let Some(texture) = &mut self.texture {
+                    // Update texture if we have a new frame
+                    texture.set(frame.clone(), Default::default());
+
+                    let size = texture.size_vec2();
+                    ui.image((texture.id(), size));
+                }
             } else {
                 ui.label("No frame captured yet. Click 'Start Capture' to begin.");
             }
