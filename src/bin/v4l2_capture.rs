@@ -100,7 +100,12 @@ impl CameraApp {
         let camera_index = CameraIndex::Index(self.camera_index);
         let requested_format = RequestedFormat::new::<RgbFormat>(RequestedFormatType::AbsoluteHighestFrameRate);
         let mut camera = Camera::new(camera_index, requested_format)?;
-        camera.set_resolution(Resolution::new(self.width, self.height))?;
+
+        // Try to set resolution, but don't fail if it's not supported
+        if let Err(e) = camera.set_resolution(Resolution::new(self.width, self.height)) {
+            println!("Warning: Could not set resolution {}x{}: {}. Using camera default.", self.width, self.height, e);
+        }
+
         camera.open_stream()?;
         self.camera = Some(camera);
 
@@ -168,12 +173,20 @@ impl CameraApp {
                 let actual_width = resolution.width_x as usize;
                 let actual_height = resolution.height_y as usize;
 
+                // Check if buffer size matches expected RGB format (3 bytes per pixel)
+                let expected_buffer_size = actual_width * actual_height * 3;
+                if buffer.len() != expected_buffer_size {
+                    self.sync_info = format!("Frame format mismatch: got {} bytes, expected {} bytes for {}x{} RGB",
+                                           buffer.len(), expected_buffer_size, actual_width, actual_height);
+                    return Ok(());
+                }
+
                 let pixels: Vec<egui::Color32> = buffer
                     .chunks_exact(3)
                     .map(|rgb| egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]))
                     .collect();
 
-                // Check if we got the expected number of pixels
+                // Verify we got the expected number of pixels
                 let expected_pixels = actual_width * actual_height;
                 if pixels.len() == expected_pixels {
                     self.current_frame = Some(ColorImage {
@@ -181,11 +194,11 @@ impl CameraApp {
                         pixels,
                         source_size: egui::Vec2::new(actual_width as f32, actual_height as f32),
                     });
-                    // Update stored dimensions if they changed
+                    // Update stored dimensions to match actual camera resolution
                     self.width = actual_width as u32;
                     self.height = actual_height as u32;
                 } else {
-                    self.sync_info = format!("Frame size mismatch: got {} pixels, expected {} ({}x{})",
+                    self.sync_info = format!("Frame processing error: extracted {} pixels, expected {} for {}x{}",
                                            pixels.len(), expected_pixels, actual_width, actual_height);
                 }
             } else {
