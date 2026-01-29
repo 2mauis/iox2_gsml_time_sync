@@ -138,6 +138,18 @@ cargo run --bin subscriber 110 15
 cargo run --bin subscriber 110 5
 ```
 
+**V4L2 Camera Capture (Cross-platform)**:
+```bash
+# Default camera (index 0), 30fps input, 30fps output
+cargo run --bin v4l2_capture
+
+# Camera index 1, 30fps input, 10fps output, 1280x720 resolution
+cargo run --bin v4l2_capture 1 10 1280 720
+
+# Camera index 0, 30fps input, 5fps output, 640x480 resolution
+cargo run --bin v4l2_capture 0 5 640 480
+```
+
 **⚠️ CRITICAL: V4L2 Buffer Management**
 
 When implementing frame skipping in real V4L2 code, **always dequeue and requeue buffers**:
@@ -157,13 +169,61 @@ ioctl(fd, VIDIOC_QBUF, &buf);   // ALWAYS requeue (critical!)
 
 **Why**: V4L2 streaming stops if buffers aren't returned to the driver.
 
+## V4L2 Camera Capture Demo
+
+The `v4l2_capture` binary provides a **cross-platform camera capture implementation** that integrates the synchronization logic with real camera hardware:
+
+### Features
+- **Cross-platform**: Works on macOS (AVFoundation), Linux (V4L2), and Windows (MSMF)
+- **Real camera capture**: Uses `nokhwa` library for hardware camera access
+- **Iceoryx2 synchronization**: Same timestamp correlation as subscriber demo
+- **Frame skipping**: Configurable output FPS with automatic frame dropping
+- **Resolution control**: Set custom camera resolution
+- **Automatic buffer management**: No manual V4L2 ioctl calls needed
+
+### Architecture
+```
+Camera Hardware → nokhwa → Iceoryx2 Sync → Frame Processing
+     ↑              ↑            ↑              ↑
+  Real Device    Cross-platform  Timestamp     Your Code
+```
+
+### Usage Examples
+
+**Basic camera capture with sync**:
+```bash
+# Terminal 1: Start trigger publisher
+cargo run --bin publisher 33
+
+# Terminal 2: Start camera capture (camera 0, 30fps output)
+cargo run --bin v4l2_capture 0 30 640 480
+```
+
+**High-speed capture with frame skipping**:
+```bash
+# 30fps camera input, 5fps output (6x frame reduction)
+cargo run --bin v4l2_capture 0 5 1280 720
+```
+
+### Output Format
+```
+Camera initialized successfully. Starting Iceoryx2 subscriber...
+Iceoryx2 subscriber started. Beginning synchronized V4L2 capture...
+SYNCED [PAST]: trigger_id=123, hw_exposure_ts=1769704462251947000, v4l2_ts=1769704462778936000, total_latency=526.9ms, v4l2_delay=526.9ms, score=11.2ms, cleaned=3, frame_size=614400bytes
+  Frame resolution: 640x480, format: RGB3
+SYNCED [PAST]: trigger_id=126, hw_exposure_ts=1769704462290007000, v4l2_ts=1769704462946580000, total_latency=656.6ms, v4l2_delay=656.6ms, score=8.9ms, cleaned=2, frame_size=614400bytes
+```
+
 **Example for your 30fps camera with 10fps output**:
 ```bash
 # Terminal 1: Publisher with 33ms intervals (30fps)
 cargo run --bin publisher 33
 
-# Terminal 2: Subscriber with 110ms V4L2 delay, 10fps output
+# Terminal 2: Subscriber simulation with 110ms V4L2 delay, 10fps output
 cargo run --bin subscriber 110 10
+
+# OR Terminal 2: Real camera capture with 10fps output
+cargo run --bin v4l2_capture 0 10 640 480
 ```
 
 ## Expected Output
