@@ -131,12 +131,31 @@ cargo run --bin subscriber 110 30
 # 30fps input, 10fps output (skip 2/3 frames)
 cargo run --bin subscriber 110 10
 
-# 30fps input, 15fps output (skip 1/2 frames)  
+# 30fps input, 15fps output (skip 1/2 frames)
 cargo run --bin subscriber 110 15
 
 # 30fps input, 5fps output (skip 5/6 frames)
 cargo run --bin subscriber 110 5
 ```
+
+**⚠️ CRITICAL: V4L2 Buffer Management**
+
+When implementing frame skipping in real V4L2 code, **always dequeue and requeue buffers**:
+
+```c
+// Required V4L2 buffer handling (even for skipped frames)
+ioctl(fd, VIDIOC_DQBUF, &buf);  // Always dequeue
+
+if (should_process_frame) {
+    // Process frame with synchronization
+} else {
+    // Skip frame but still handle buffer
+}
+
+ioctl(fd, VIDIOC_QBUF, &buf);   // ALWAYS requeue (critical!)
+```
+
+**Why**: V4L2 streaming stops if buffers aren't returned to the driver.
 
 **Example for your 30fps camera with 10fps output**:
 ```bash

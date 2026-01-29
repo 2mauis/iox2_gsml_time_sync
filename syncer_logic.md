@@ -62,8 +62,71 @@ cargo run --bin subscriber [v4l2_delay_ms] [output_fps]
 The subscriber supports frame skipping to achieve desired output frame rates:
 
 - **30fps input** → **10fps output**: Process every 3rd frame (skip 2/3)
-- **30fps input** → **15fps output**: Process every 2nd frame (skip 1/2)  
+- **30fps input** → **15fps output**: Process every 2nd frame (skip 1/2)
 - **30fps input** → **5fps output**: Process every 6th frame (skip 5/6)
+
+**⚠️ IMPORTANT: V4L2 Buffer Management with Frame Skipping**
+
+When skipping frames for output FPS control, you **MUST** still handle V4L2 buffer operations:
+
+```c
+// In your V4L2 capture loop:
+struct v4l2_buffer buf;
+
+// 1. Always dequeue frames (required for streaming to continue)
+ioctl(fd, VIDIOC_DQBUF, &buf);
+
+// 2. Check if you should process this frame
+if (should_process_frame()) {
+    // Process frame: synchronize with triggers, do application logic
+    process_synchronized_frame(&buf);
+} else {
+    // Skip frame: just log it
+    printf("SKIPPED: Frame %d skipped for output FPS control\n", frame_count);
+}
+
+// 3. ALWAYS requeue the buffer (critical!)
+ioctl(fd, VIDIOC_QBUF, &buf);
+```
+
+**Why This Matters**:
+- V4L2 ring buffer fills up if buffers aren't returned
+- Streaming stops when all buffers are full
+- Skipping application processing ≠ skipping V4L2 buffer management
+- **Buffer requeue is mandatory** regardless of frame processing decision
+
+**Simulation vs Real V4L2 Implementation**:
+
+**Current Demo (Simulation)**:
+- Uses `std::thread::sleep()` to simulate V4L2 delay
+- Frame skipping only affects application processing
+- No actual V4L2 buffer management
+
+**Real V4L2 Implementation**:
+- Must dequeue buffers: `ioctl(fd, VIDIOC_DQBUF, &buf)`
+- Apply frame skipping logic to decide processing
+- Always requeue buffers: `ioctl(fd, VIDIOC_QBUF, &buf)`
+- Buffer management is independent of application processing
+
+**Example Real V4L2 Code**:
+```c
+while (streaming) {
+    // Always dequeue (required)
+    ioctl(fd, VIDIOC_DQBUF, &buf);
+
+    // Check frame skipping logic
+    if (frame_count % skip_ratio == 0) {
+        // Process frame: synchronize with triggers
+        process_frame_with_sync(&buf);
+    } else {
+        // Skip frame: log but still handle buffer
+        printf("SKIPPED: Frame %d\n", frame_count);
+    }
+
+    // ALWAYS requeue (critical for streaming to continue)
+    ioctl(fd, VIDIOC_QBUF, &buf);
+}
+```
 
 **Example Output with 10fps**:
 ```
