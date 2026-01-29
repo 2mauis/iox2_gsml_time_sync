@@ -113,13 +113,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(match_index) = best_match_index {
                 let (trigger_id, hw_ts, pub_ts) = pending_triggers.remove(match_index).unwrap();
 
+                // OPTIMIZATION: Remove all triggers older than the matched one
+                // These will never be useful for future frames since they're too old
+                let removed_old_count = match_index; // Number of triggers before the matched one
+                for _ in 0..removed_old_count {
+                    if let Some((old_trigger_id, _, _)) = pending_triggers.pop_front() {
+                        println!("CLEANUP: Removed old trigger id={} (too old for future frames)", old_trigger_id);
+                    }
+                }
+
                 // Calculate synchronization metrics
                 let total_latency_ms = (v4l2_timestamp_ns - hw_ts) as f64 / 1_000_000.0;
                 let v4l2_delay_ms = (v4l2_timestamp_ns - pub_ts) as f64 / 1_000_000.0;
                 let trigger_type = if hw_ts < v4l2_timestamp_ns { "PAST" } else { "FUTURE" };
 
-                println!("SYNCED [{}]: trigger_id={}, hw_exposure_ts={}, v4l2_ts={}, total_latency={:.1}ms, v4l2_delay={:.1}ms, score={:.1}ms",
-                         trigger_type, trigger_id, hw_ts, v4l2_timestamp_ns, total_latency_ms, v4l2_delay_ms, best_score);
+                println!("SYNCED [{}]: trigger_id={}, hw_exposure_ts={}, v4l2_ts={}, total_latency={:.1}ms, v4l2_delay={:.1}ms, score={:.1}ms, cleaned={}",
+                         trigger_type, trigger_id, hw_ts, v4l2_timestamp_ns, total_latency_ms, v4l2_delay_ms, best_score, removed_old_count);
 
                 // Process the synchronized frame here
                 // Your frame processing code would go here

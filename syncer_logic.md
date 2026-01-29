@@ -154,6 +154,13 @@ for trigger in &pending_triggers {
         best_match = Some(*trigger);
     }
 }
+
+// OPTIMIZATION: Clean up old triggers after matching
+// Remove all triggers older than the matched one - they'll never be useful
+let removed_old_count = match_index;
+for _ in 0..removed_old_count {
+    pending_triggers.pop_front(); // Remove old triggers
+}
 ```
 
 ### Real-World Impact
@@ -167,7 +174,7 @@ for trigger in &pending_triggers {
 
 **Analysis for your setup**:
 - **Trigger interval**: 33ms (30fps = 1000ms/30 ≈ 33.3ms)
-- **V4L2 delay**: 110ms  
+- **V4L2 delay**: 110ms
 - **Delay/intervals ratio**: 110ms ÷ 33ms ≈ **3.3 triggers**
 
 **What happens in your case**:
@@ -201,5 +208,28 @@ Future triggers: T_v4l2+33ms, T_v4l2+66ms, T_v4l2+99ms, ...
 2. **Optimize Processing**: Faster frame processing reduces effective delay
 3. **Hardware Triggers**: Use external trigger hardware with precise timing
 4. **Timestamp Calibration**: Measure and compensate for system delays
+
+### Memory Management Optimization
+
+**Trigger Cleanup After Matching**:
+After successfully matching a frame to a trigger, the algorithm automatically removes all older triggers from the pending queue. This prevents memory bloat and improves performance:
+
+**Why This Works**:
+- **Future frames arrive later** → they need newer triggers
+- **Older triggers are never useful again** → safe to discard
+- **Prevents unbounded memory growth** → maintains consistent performance
+- **Faster future searches** → smaller search space
+
+**Example Cleanup**:
+```
+Before: [T-200ms, T-150ms, T-100ms, T-50ms, T+50ms] (5 triggers)
+Match: T-100ms trigger for current frame
+After:  [T-50ms, T+50ms] (2 triggers, 3 cleaned up)
+```
+
+**Benefits for Your 30fps Case**:
+- 110ms delay creates ~3 old triggers per frame
+- Cleanup prevents 3x memory growth over time
+- Maintains fast correlation even after hours of operation
 
 This is an excellent catch - the current implementation works well for typical camera setups but fails under high-frequency or high-latency conditions! 🔍
