@@ -1,0 +1,124 @@
+use iceoryx2::prelude::*;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::collections::VecDeque;
+
+// Use tuple: (frame_id, hardware_timestamp_ns, publish_timestamp_ns)
+type CameraTrigger = (u64, u64, u64);
+
+#[derive(Debug)]
+struct V4L2Frame {
+    frame_id: u64,
+    v4l2_timestamp_ns: u64,  // When V4L2 delivered the frame
+    data: Vec<u8>,  // Simulated frame data
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let node = NodeBuilder::new().create::<ipc::Service>()?;
+
+    // Open the same service
+    let service = node
+        .service_builder(&"Camera/Sync".try_into()?)
+        .publish_subscribe::<CameraTrigger>()
+        // Enable safe overflow for burst triggers
+        .enable_safe_overflow(true)
+        // Store recent triggers for late V4L2 frames
+        .history_size(10)
+        // Buffer for trigger bursts
+        .subscriber_max_buffer_size(20)
+        // Allow multiple camera processes
+        .max_subscribers(3)
+        // Single trigger publisher
+        .max_publishers(1)
+        .open_or_create()?;
+
+    let subscriber = service
+        .subscriber_builder()
+        .create()?;
+
+    println!("Camera sync subscriber started. Synchronizing hardware timestamps with V4L2 frames...");
+
+    // Buffer for pending triggers waiting for V4L2 frames
+    let mut pending_triggers: VecDeque<CameraTrigger> = VecDeque::new();
+
+    // Drain historical triggers at the beginning (if any)
+    println!("Draining historical triggers...");
+    let mut history_count = 0;
+    while let Some(trigger) = subscriber.receive()? {
+        let (trigger_id, hw_ts, _pub_ts) = *trigger;
+        println!("Historical trigger: id={}, hw_ts={}", trigger_id, hw_ts);
+        pending_triggers.push_back(*trigger);
+        history_count += 1;
+    }
+    println!("Drained {} historical triggers. Starting real-time sync...", history_count);
+
+    loop {
+        // Receive new triggers
+        while let Some(trigger) = subscriber.receive()? {
+            let (trigger_id, hw_ts, pub_ts) = *trigger;
+            println!("Received trigger: id={}, hw_ts={}, ipc_delay={}ns",
+                     trigger_id, hw_ts, pub_ts.saturating_sub(hw_ts));
+
+            pending_triggers.push_back(*trigger);
+
+            // Limit pending triggers to avoid memory issues (keep last 100)
+            if pending_triggers.len() > 100 {
+                if let Some((old_trigger_id, _, _)) = pending_triggers.pop_front() {
+                    println!("WARNING: Dropped old trigger id={} (V4L2 too slow)", old_trigger_id);
+                }
+            }
+        }
+
+        // Simulate V4L2 frame capture (slower than triggers)
+        // In real code, this would be your V4L2 capture loop
+        if !pending_triggers.is_empty() {
+            // Simulate V4L2 processing delay (e.g., 100-200ms)
+            let v4l2_delay_ms = 150; // Adjust based on your camera
+            std::thread::sleep(Duration::from_millis(v4l2_delay_ms));
+
+            // Simulate receiving a frame from V4L2
+            let v4l2_timestamp_ns = SystemTime::now()
+                .duration_since(UNIX_EPOCH)?
+                .as_nanos() as u64;
+
+            // Find the best matching trigger based on timestamp proximity
+            // Look for trigger with hardware timestamp closest to when the V4L2 frame was captured
+            let mut best_match_index = None;
+            let mut best_time_diff = u64::MAX;
+
+            for (index, (_trigger_id, hw_ts, _pub_ts)) in pending_triggers.iter().enumerate() {
+                let time_diff = if v4l2_timestamp_ns > *hw_ts {
+                    v4l2_timestamp_ns - hw_ts
+                } else {
+                    hw_ts - v4l2_timestamp_ns
+                };
+
+                // Allow up to 500ms tolerance for matching (adjust based on your system)
+                if time_diff < best_time_diff && time_diff < 500_000_000 {
+                    best_time_diff = time_diff;
+                    best_match_index = Some(index);
+                }
+            }
+
+            if let Some(match_index) = best_match_index {
+                let (trigger_id, hw_ts, pub_ts) = pending_triggers.remove(match_index).unwrap();
+
+                // Calculate synchronization metrics
+                let total_latency_ms = (v4l2_timestamp_ns - hw_ts) as f64 / 1_000_000.0;
+                let v4l2_delay_ms = (v4l2_timestamp_ns - pub_ts) as f64 / 1_000_000.0;
+
+                println!("SYNCED: trigger_id={}, hw_exposure_ts={}, v4l2_ts={}, total_latency={:.1}ms, v4l2_delay={:.1}ms",
+                         trigger_id, hw_ts, v4l2_timestamp_ns, total_latency_ms, v4l2_delay_ms);
+
+                // Process the synchronized frame here
+                // Your frame processing code would go here
+
+            } else {
+                // No suitable trigger found within tolerance
+                println!("WARNING: V4L2 frame at {}ns - no matching trigger within 500ms tolerance", v4l2_timestamp_ns);
+            }
+        }
+
+        // Small delay to prevent busy waiting
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}

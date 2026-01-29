@@ -1,0 +1,1 @@
+iceoryx2::service::builder::publish_subscribe::Builder<CameraTrigger, (), iceoryx2::service::ipc::Service>

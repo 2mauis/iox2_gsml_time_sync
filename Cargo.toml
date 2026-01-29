@@ -1,0 +1,7 @@
+[package]
+name = "iox2-pubsub-demo"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+iceoryx2 = "0.8"
