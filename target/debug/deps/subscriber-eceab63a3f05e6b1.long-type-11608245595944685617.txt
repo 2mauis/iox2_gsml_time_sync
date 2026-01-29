@@ -1,1 +1,0 @@
-PortFactorySubscriber<'_, iceoryx2::service::ipc::Service, u64, ()>

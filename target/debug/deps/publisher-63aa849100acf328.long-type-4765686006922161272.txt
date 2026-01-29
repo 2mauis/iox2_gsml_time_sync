@@ -1,1 +1,0 @@
-iceoryx2::service::builder::publish_subscribe::Builder<Message, (), iceoryx2::service::ipc::Service>
