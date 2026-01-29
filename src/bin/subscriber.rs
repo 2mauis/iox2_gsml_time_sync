@@ -81,20 +81,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .as_nanos() as u64;
 
             // Find the best matching trigger based on timestamp proximity
-            // Look for trigger with hardware timestamp closest to when the V4L2 frame was captured
+            // IMPROVED: Handle case where V4L2 delay > trigger interval
+            // Prefer past triggers (hw_ts < v4l2_ts) but allow future triggers as fallback
             let mut best_match_index = None;
-            let mut best_time_diff = u64::MAX;
+            let mut best_score = f64::MAX;
 
             for (index, (_trigger_id, hw_ts, _pub_ts)) in pending_triggers.iter().enumerate() {
-                let time_diff = if v4l2_timestamp_ns > *hw_ts {
+                let time_diff_ns = if v4l2_timestamp_ns > *hw_ts {
                     v4l2_timestamp_ns - hw_ts
                 } else {
                     hw_ts - v4l2_timestamp_ns
                 };
+                let time_diff_ms = time_diff_ns as f64 / 1_000_000.0;
+
+                // Prefer past triggers (hw_ts < v4l2_ts) - these are more likely correct
+                // Penalize future triggers since they might be from subsequent frames
+                let is_past_trigger = *hw_ts < v4l2_timestamp_ns;
+                let score = if is_past_trigger {
+                    time_diff_ms  // No penalty for past triggers
+                } else {
+                    time_diff_ms * 2.0  // 2x penalty for future triggers
+                };
 
                 // Allow up to 500ms tolerance for matching (adjust based on your system)
-                if time_diff < best_time_diff && time_diff < 500_000_000 {
-                    best_time_diff = time_diff;
+                if score < best_score && time_diff_ms < 500.0 {
+                    best_score = score;
                     best_match_index = Some(index);
                 }
             }

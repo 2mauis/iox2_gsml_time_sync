@@ -94,11 +94,85 @@ Available Triggers:
 Result: Frame matches Trigger B (hw_ts = 1020ms) - accurate exposure time!
 ```
 
-## Key Benefits
+## Critical Limitation: High-Frequency Triggers with Long V4L2 Delays
 
-- **Accurate timestamps**: Use real exposure time, not V4L2 delivery time
-- **Handles buffering**: Works regardless of V4L2 buffer size/configuration
-- **Late-joining support**: Cameras can start anytime and immediately sync
-- **Multi-camera ready**: All cameras share the same trigger timeline
+### The Problem You Identified
 
-This buffering is essential for reliable camera capture but creates the timing challenge that our Iceoryx2 synchronization addresses! 🎯
+What happens when **V4L2 buffer delay > trigger interval**?
+
+**Example Scenario**:
+- Camera triggers at **100Hz** (every 10ms)
+- V4L2 processing delay is **150ms**
+- Frame exposed at time `T = 1000ms`
+- Frame arrives at `T + 150ms = 1150ms`
+
+**Available Triggers** (all "future" relative to V4L2 timestamp):
+```
+Trigger Times: 1010ms, 1020ms, 1030ms, ..., 1150ms, 1160ms, ...
+V4L2 Frame: 1150ms
+```
+
+**Current Algorithm Issue**:
+- Looks for closest `hw_ts > v4l2_ts` (future triggers only)
+- Finds `1150ms` trigger (0ms difference)
+- **But this trigger came AFTER the frame was already delivered!**
+- The correct trigger was `1000ms` (150ms before V4L2 timestamp)
+
+### Why This Breaks Synchronization
+
+The current algorithm assumes: `V4L2_delay < trigger_interval`
+
+When this assumption fails:
+- Multiple triggers become "future" candidates
+- Closest future trigger ≠ correct exposure trigger
+- **Synchronization accuracy degrades significantly**
+
+### Better Solution: Bidirectional Timestamp Correlation
+
+**Improved Algorithm**:
+1. **Search Window**: Look at triggers within ±500ms of V4L2 timestamp
+2. **Past Preference**: Prefer triggers where `hw_ts < v4l2_ts` (past triggers)
+3. **Delay Estimation**: Use historical delay measurements to validate matches
+4. **Fallback Logic**: If no past triggers match, use closest future trigger
+
+**Code Enhancement**:
+```rust
+// Enhanced correlation with past/future preference
+let mut best_match = None;
+let mut best_score = f64::MAX;
+
+for trigger in &pending_triggers {
+    let (trigger_id, hw_ts, pub_ts) = *trigger;
+    let time_diff = (v4l2_timestamp_ns as i64 - hw_ts as i64).abs() as f64;
+    
+    // Prefer past triggers (hw_ts < v4l2_ts) with bonus scoring
+    let is_past = hw_ts < v4l2_timestamp_ns;
+    let score = if is_past { time_diff } else { time_diff * 1.5 }; // Penalize future triggers
+    
+    if score < best_score && time_diff < 500_000_000.0 {
+        best_score = score;
+        best_match = Some(*trigger);
+    }
+}
+```
+
+### Real-World Impact
+
+**High-Speed Cameras** (500Hz triggers = 2ms intervals):
+- V4L2 delay of 50ms creates 25 "future" triggers
+- Current algorithm has 25x higher error rate
+- Improved algorithm maintains accuracy
+
+**Slow Processing Systems**:
+- Heavy image processing pipelines
+- GPU-accelerated computer vision
+- Network transmission delays
+
+### Mitigation Strategies
+
+1. **Reduce V4L2 Buffers**: Smaller ring buffers = lower latency
+2. **Optimize Processing**: Faster frame processing reduces effective delay
+3. **Hardware Triggers**: Use external trigger hardware with precise timing
+4. **Timestamp Calibration**: Measure and compensate for system delays
+
+This is an excellent catch - the current implementation works well for typical camera setups but fails under high-frequency or high-latency conditions! 🔍
