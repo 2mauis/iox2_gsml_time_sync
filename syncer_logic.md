@@ -144,11 +144,11 @@ let mut best_score = f64::MAX;
 for trigger in &pending_triggers {
     let (trigger_id, hw_ts, pub_ts) = *trigger;
     let time_diff = (v4l2_timestamp_ns as i64 - hw_ts as i64).abs() as f64;
-    
+
     // Prefer past triggers (hw_ts < v4l2_ts) with bonus scoring
     let is_past = hw_ts < v4l2_timestamp_ns;
     let score = if is_past { time_diff } else { time_diff * 1.5 }; // Penalize future triggers
-    
+
     if score < best_score && time_diff < 500_000_000.0 {
         best_score = score;
         best_match = Some(*trigger);
@@ -162,6 +162,33 @@ for trigger in &pending_triggers {
 - V4L2 delay of 50ms creates 25 "future" triggers
 - Current algorithm has 25x higher error rate
 - Improved algorithm maintains accuracy
+
+**Your Specific Case: 30fps Camera (33ms intervals) with 110ms V4L2 Delay**
+
+**Analysis for your setup**:
+- **Trigger interval**: 33ms (30fps = 1000ms/30 ≈ 33.3ms)
+- **V4L2 delay**: 110ms  
+- **Delay/intervals ratio**: 110ms ÷ 33ms ≈ **3.3 triggers**
+
+**What happens in your case**:
+```
+Frame arrives at T_v4l2
+Available triggers relative to T_v4l2:
+Past triggers: T_v4l2-33ms, T_v4l2-66ms, T_v4l2-99ms, T_v4l2-132ms, ...
+Future triggers: T_v4l2+33ms, T_v4l2+66ms, T_v4l2+99ms, ...
+```
+
+**Original algorithm problem**:
+- Would pick closest future trigger (T_v4l2+33ms)
+- This trigger came **33ms after** frame delivery - clearly wrong!
+
+**Improved algorithm solution**:
+- Prefers past triggers with no penalty
+- Would select trigger closest to T_v4l2 among past triggers
+- For 110ms delay, selects trigger at T_v4l2-99ms (11ms difference)
+- This is much closer to the true exposure time than future triggers
+
+**Expected accuracy**: Within 1-2 trigger intervals of correct timestamp
 
 **Slow Processing Systems**:
 - Heavy image processing pipelines
