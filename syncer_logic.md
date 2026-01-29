@@ -5,7 +5,8 @@
 - ✅ **Fixed critical timestamp correlation bug** for high-frequency triggers
 - ✅ **Bidirectional correlation algorithm** prefers past triggers over future ones
 - ✅ **Automatic trigger cleanup** prevents memory bloat and maintains performance
-- ✅ **Optimized for 30fps cameras** with 110ms V4L2 delay (33ms trigger intervals)
+- ✅ **Configurable parameters** for different camera setups
+- ✅ **Frame skipping support** for output FPS control (10fps, 15fps, 5fps, etc.)
 - ✅ **Enhanced logging** shows trigger type [PAST/FUTURE], match score, and cleanup count
 
 ## Does V4L2 Have a Buffer?
@@ -51,9 +52,27 @@ Sensor   Hardware     Kernel Space   User Space  Reuse
 cargo run --bin publisher [trigger_interval_ms]
 # Default: 33ms (30 FPS), Example: 17ms (60 FPS), 2ms (500 FPS)
 
-# Subscriber: Set V4L2 processing delay (milliseconds)
-cargo run --bin subscriber [v4l2_delay_ms]
-# Default: 150ms, Example: 110ms (your case), 50ms (fast camera)
+# Subscriber: Set V4L2 processing delay and output FPS (milliseconds, fps)
+cargo run --bin subscriber [v4l2_delay_ms] [output_fps]
+# Default: 150ms delay, 30fps output
+# Example: 110ms delay, 10fps output (your 30fps → 10fps case)
+```
+
+**Frame Skipping for Output FPS Control**:
+The subscriber supports frame skipping to achieve desired output frame rates:
+
+- **30fps input** → **10fps output**: Process every 3rd frame (skip 2/3)
+- **30fps input** → **15fps output**: Process every 2nd frame (skip 1/2)  
+- **30fps input** → **5fps output**: Process every 6th frame (skip 5/6)
+
+**Example Output with 10fps**:
+```
+SKIPPED: Frame 1 skipped (output FPS: 10fps, processing every 3th trigger)
+SKIPPED: Frame 2 skipped (output FPS: 10fps, processing every 3th trigger)
+SYNCED [PAST]: trigger_id=123, ... (processed frame 3)
+SKIPPED: Frame 4 skipped (output FPS: 10fps, processing every 3th trigger)
+SKIPPED: Frame 5 skipped (output FPS: 10fps, processing every 3th trigger)
+SYNCED [PAST]: trigger_id=126, ... (processed frame 6)
 ```
 
 **Typical V4L2 buffer setup**:

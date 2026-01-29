@@ -7,7 +7,8 @@ This demo showcases **hardware camera synchronization** using Iceoryx2 pub/sub w
 - ✅ **Fixed critical timestamp correlation bug** for high-frequency triggers
 - ✅ **Bidirectional correlation algorithm** prefers past triggers over future ones
 - ✅ **Automatic trigger cleanup** prevents memory bloat and maintains performance
-- ✅ **Optimized for 30fps cameras** with 110ms V4L2 delay (33ms trigger intervals)
+- ✅ **Configurable parameters** for different camera setups
+- ✅ **Frame skipping support** for output FPS control (10fps, 15fps, 5fps, etc.)
 - ✅ **Enhanced logging** shows trigger type [PAST/FUTURE], match score, and cleanup count
 
 ## Camera Synchronization Problem
@@ -122,25 +123,28 @@ cargo run --bin publisher 17
 cargo run --bin publisher 2
 ```
 
-**Subscriber (V4L2 Camera)**:
+**Subscriber (V4L2 Camera) with Frame Skipping**:
 ```bash
-# Default V4L2 delay (150ms)
-cargo run --bin subscriber
+# Default: 30fps input, 30fps output (no skipping)
+cargo run --bin subscriber 110 30
 
-# Your specific setup: 30fps camera with 110ms V4L2 delay
-cargo run --bin subscriber 110
+# 30fps input, 10fps output (skip 2/3 frames)
+cargo run --bin subscriber 110 10
 
-# Fast processing camera (50ms V4L2 delay)
-cargo run --bin subscriber 50
+# 30fps input, 15fps output (skip 1/2 frames)  
+cargo run --bin subscriber 110 15
+
+# 30fps input, 5fps output (skip 5/6 frames)
+cargo run --bin subscriber 110 5
 ```
 
-**Example for your 30fps camera**:
+**Example for your 30fps camera with 10fps output**:
 ```bash
 # Terminal 1: Publisher with 33ms intervals (30fps)
 cargo run --bin publisher 33
 
-# Terminal 2: Subscriber with 110ms V4L2 delay
-cargo run --bin subscriber 110
+# Terminal 2: Subscriber with 110ms V4L2 delay, 10fps output
+cargo run --bin subscriber 110 10
 ```
 
 ## Expected Output

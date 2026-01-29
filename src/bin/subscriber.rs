@@ -16,14 +16,36 @@ struct V4L2Frame {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command line arguments
     let args: Vec<String> = env::args().collect();
-    let v4l2_delay_ms = if args.len() > 1 {
-        args[1].parse::<u64>().unwrap_or(150)
+
+    // Default values
+    let mut v4l2_delay_ms = 150u64;
+    let mut output_fps = 30u32; // Default: process all frames (30fps input = 30fps output)
+
+    // Parse arguments: subscriber [v4l2_delay_ms] [output_fps]
+    if args.len() > 1 {
+        if let Ok(delay) = args[1].parse::<u64>() {
+            v4l2_delay_ms = delay;
+        }
+    }
+    if args.len() > 2 {
+        if let Ok(fps) = args[2].parse::<u32>() {
+            output_fps = fps;
+        }
+    }
+
+    // Calculate frame skip ratio
+    let input_fps = 30u32; // Assuming 30fps input triggers
+    let skip_ratio = if output_fps >= input_fps {
+        1 // No skipping if output FPS >= input FPS
     } else {
-        150 // Default V4L2 delay in milliseconds
+        (input_fps as f32 / output_fps as f32).round() as u32
     };
 
-    println!("Camera sync subscriber started with V4L2 delay: {}ms", v4l2_delay_ms);
-    println!("Usage: {} [v4l2_delay_ms]", args[0]);
+    println!("Camera sync subscriber started:");
+    println!("  V4L2 delay: {}ms", v4l2_delay_ms);
+    println!("  Input triggers: {}fps (33ms intervals)", input_fps);
+    println!("  Output FPS: {}fps (process every {}th trigger)", output_fps, skip_ratio);
+    println!("Usage: {} [v4l2_delay_ms] [output_fps]", args[0]);
     println!("Synchronizing hardware timestamps with V4L2 frames...");
 
     let node = NodeBuilder::new().create::<ipc::Service>()?;
@@ -52,6 +74,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Buffer for pending triggers waiting for V4L2 frames
     let mut pending_triggers: VecDeque<CameraTrigger> = VecDeque::new();
+
+    // Frame skipping for output FPS control
+    let mut trigger_count = 0u32;
 
     // Drain historical triggers at the beginning (if any)
     println!("Draining historical triggers...");
@@ -84,70 +109,80 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Simulate V4L2 frame capture (slower than triggers)
         // In real code, this would be your V4L2 capture loop
         if !pending_triggers.is_empty() {
-            // Simulate V4L2 processing delay (configurable via command line)
-            std::thread::sleep(Duration::from_millis(v4l2_delay_ms));
+            // Frame skipping for output FPS control
+            trigger_count += 1;
+            let should_process = (trigger_count % skip_ratio) == 0;
 
-            // Simulate receiving a frame from V4L2
-            let v4l2_timestamp_ns = SystemTime::now()
-                .duration_since(UNIX_EPOCH)?
-                .as_nanos() as u64;
+            if should_process {
+                // Simulate V4L2 processing delay (configurable via command line)
+                std::thread::sleep(Duration::from_millis(v4l2_delay_ms));
 
-            // Find the best matching trigger based on timestamp proximity
-            // IMPROVED: Handle case where V4L2 delay > trigger interval
-            // Prefer past triggers (hw_ts < v4l2_ts) but allow future triggers as fallback
-            let mut best_match_index = None;
-            let mut best_score = f64::MAX;
+                // Simulate receiving a frame from V4L2
+                let v4l2_timestamp_ns = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)?
+                    .as_nanos() as u64;
 
-            for (index, (_trigger_id, hw_ts, _pub_ts)) in pending_triggers.iter().enumerate() {
-                let time_diff_ns = if v4l2_timestamp_ns > *hw_ts {
-                    v4l2_timestamp_ns - hw_ts
-                } else {
-                    hw_ts - v4l2_timestamp_ns
-                };
-                let time_diff_ms = time_diff_ns as f64 / 1_000_000.0;
+                // Find the best matching trigger based on timestamp proximity
+                // IMPROVED: Handle case where V4L2 delay > trigger interval
+                // Prefer past triggers (hw_ts < v4l2_ts) but allow future triggers as fallback
+                let mut best_match_index = None;
+                let mut best_score = f64::MAX;
 
-                // Prefer past triggers (hw_ts < v4l2_ts) - these are more likely correct
-                // Penalize future triggers since they might be from subsequent frames
-                let is_past_trigger = *hw_ts < v4l2_timestamp_ns;
-                let score = if is_past_trigger {
-                    time_diff_ms  // No penalty for past triggers
-                } else {
-                    time_diff_ms * 2.0  // 2x penalty for future triggers
-                };
+                for (index, (_trigger_id, hw_ts, _pub_ts)) in pending_triggers.iter().enumerate() {
+                    let time_diff_ns = if v4l2_timestamp_ns > *hw_ts {
+                        v4l2_timestamp_ns - hw_ts
+                    } else {
+                        hw_ts - v4l2_timestamp_ns
+                    };
+                    let time_diff_ms = time_diff_ns as f64 / 1_000_000.0;
 
-                // Allow up to 500ms tolerance for matching (adjust based on your system)
-                if score < best_score && time_diff_ms < 500.0 {
-                    best_score = score;
-                    best_match_index = Some(index);
-                }
-            }
+                    // Prefer past triggers (hw_ts < v4l2_ts) - these are more likely correct
+                    // Penalize future triggers since they might be from subsequent frames
+                    let is_past_trigger = *hw_ts < v4l2_timestamp_ns;
+                    let score = if is_past_trigger {
+                        time_diff_ms  // No penalty for past triggers
+                    } else {
+                        time_diff_ms * 2.0  // 2x penalty for future triggers
+                    };
 
-            if let Some(match_index) = best_match_index {
-                let (trigger_id, hw_ts, pub_ts) = pending_triggers.remove(match_index).unwrap();
-
-                // OPTIMIZATION: Remove all triggers older than the matched one
-                // These will never be useful for future frames since they're too old
-                let removed_old_count = match_index; // Number of triggers before the matched one
-                for _ in 0..removed_old_count {
-                    if let Some((old_trigger_id, _, _)) = pending_triggers.pop_front() {
-                        println!("CLEANUP: Removed old trigger id={} (too old for future frames)", old_trigger_id);
+                    // Allow up to 500ms tolerance for matching (adjust based on your system)
+                    if score < best_score && time_diff_ms < 500.0 {
+                        best_score = score;
+                        best_match_index = Some(index);
                     }
                 }
 
-                // Calculate synchronization metrics
-                let total_latency_ms = (v4l2_timestamp_ns - hw_ts) as f64 / 1_000_000.0;
-                let v4l2_delay_ms = (v4l2_timestamp_ns - pub_ts) as f64 / 1_000_000.0;
-                let trigger_type = if hw_ts < v4l2_timestamp_ns { "PAST" } else { "FUTURE" };
+                if let Some(match_index) = best_match_index {
+                    let (trigger_id, hw_ts, pub_ts) = pending_triggers.remove(match_index).unwrap();
 
-                println!("SYNCED [{}]: trigger_id={}, hw_exposure_ts={}, v4l2_ts={}, total_latency={:.1}ms, v4l2_delay={:.1}ms, score={:.1}ms, cleaned={}",
-                         trigger_type, trigger_id, hw_ts, v4l2_timestamp_ns, total_latency_ms, v4l2_delay_ms, best_score, removed_old_count);
+                    // OPTIMIZATION: Remove all triggers older than the matched one
+                    // These will never be useful for future frames since they're too old
+                    let removed_old_count = match_index; // Number of triggers before the matched one
+                    for _ in 0..removed_old_count {
+                        if let Some((old_trigger_id, _, _)) = pending_triggers.pop_front() {
+                            println!("CLEANUP: Removed old trigger id={} (too old for future frames)", old_trigger_id);
+                        }
+                    }
 
-                // Process the synchronized frame here
-                // Your frame processing code would go here
+                    // Calculate synchronization metrics
+                    let total_latency_ms = (v4l2_timestamp_ns - hw_ts) as f64 / 1_000_000.0;
+                    let v4l2_delay_ms = (v4l2_timestamp_ns - pub_ts) as f64 / 1_000_000.0;
+                    let trigger_type = if hw_ts < v4l2_timestamp_ns { "PAST" } else { "FUTURE" };
 
+                    println!("SYNCED [{}]: trigger_id={}, hw_exposure_ts={}, v4l2_ts={}, total_latency={:.1}ms, v4l2_delay={:.1}ms, score={:.1}ms, cleaned={}",
+                             trigger_type, trigger_id, hw_ts, v4l2_timestamp_ns, total_latency_ms, v4l2_delay_ms, best_score, removed_old_count);
+
+                    // Process the synchronized frame here
+                    // Your frame processing code would go here
+
+                } else {
+                    // No suitable trigger found within tolerance
+                    println!("WARNING: V4L2 frame at {}ns - no matching trigger within 500ms tolerance", v4l2_timestamp_ns);
+                }
             } else {
-                // No suitable trigger found within tolerance
-                println!("WARNING: V4L2 frame at {}ns - no matching trigger within 500ms tolerance", v4l2_timestamp_ns);
+                // Frame skipped for output FPS control
+                println!("SKIPPED: Frame {} skipped (output FPS: {}fps, processing every {}th trigger)",
+                         trigger_count, output_fps, skip_ratio);
             }
         }
 
