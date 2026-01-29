@@ -110,15 +110,38 @@ Result: Frame matches Trigger B (hw_ts = 1050ms) - accurate exposure time!
 
 ## Running the Camera Sync Demo
 
-1. **Trigger Publisher** (simulates hardware interrupts):
-   ```bash
-   cargo run --bin publisher
-   ```
+**Publisher (Trigger Source)**:
+```bash
+# Default 30 FPS (33ms intervals)
+cargo run --bin publisher
 
-2. **V4L2 Subscriber** (simulates camera frame processing):
-   ```bash
-   cargo run --bin subscriber
-   ```
+# Custom trigger interval (e.g., 60 FPS = 16.7ms ≈ 17ms)
+cargo run --bin publisher 17
+
+# High-speed camera (500 FPS = 2ms intervals)
+cargo run --bin publisher 2
+```
+
+**Subscriber (V4L2 Camera)**:
+```bash
+# Default V4L2 delay (150ms)
+cargo run --bin subscriber
+
+# Your specific setup: 30fps camera with 110ms V4L2 delay
+cargo run --bin subscriber 110
+
+# Fast processing camera (50ms V4L2 delay)
+cargo run --bin subscriber 50
+```
+
+**Example for your 30fps camera**:
+```bash
+# Terminal 1: Publisher with 33ms intervals (30fps)
+cargo run --bin publisher 33
+
+# Terminal 2: Subscriber with 110ms V4L2 delay
+cargo run --bin subscriber 110
+```
 
 ## Expected Output
 

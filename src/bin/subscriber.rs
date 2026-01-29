@@ -1,6 +1,7 @@
 use iceoryx2::prelude::*;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::collections::VecDeque;
+use std::env;
 
 // Use tuple: (frame_id, hardware_timestamp_ns, publish_timestamp_ns)
 type CameraTrigger = (u64, u64, u64);
@@ -13,6 +14,18 @@ struct V4L2Frame {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Parse command line arguments
+    let args: Vec<String> = env::args().collect();
+    let v4l2_delay_ms = if args.len() > 1 {
+        args[1].parse::<u64>().unwrap_or(150)
+    } else {
+        150 // Default V4L2 delay in milliseconds
+    };
+
+    println!("Camera sync subscriber started with V4L2 delay: {}ms", v4l2_delay_ms);
+    println!("Usage: {} [v4l2_delay_ms]", args[0]);
+    println!("Synchronizing hardware timestamps with V4L2 frames...");
+
     let node = NodeBuilder::new().create::<ipc::Service>()?;
 
     // Open the same service
@@ -71,8 +84,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Simulate V4L2 frame capture (slower than triggers)
         // In real code, this would be your V4L2 capture loop
         if !pending_triggers.is_empty() {
-            // Simulate V4L2 processing delay (e.g., 100-200ms)
-            let v4l2_delay_ms = 150; // Adjust based on your camera
+            // Simulate V4L2 processing delay (configurable via command line)
             std::thread::sleep(Duration::from_millis(v4l2_delay_ms));
 
             // Simulate receiving a frame from V4L2

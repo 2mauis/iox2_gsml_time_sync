@@ -1,10 +1,23 @@
 use iceoryx2::prelude::*;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::env;
 
 // Use tuple: (frame_id, hardware_timestamp_ns, publish_timestamp_ns)
 type CameraTrigger = (u64, u64, u64);
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Parse command line arguments
+    let args: Vec<String> = env::args().collect();
+    let trigger_interval_ms = if args.len() > 1 {
+        args[1].parse::<u64>().unwrap_or(33)
+    } else {
+        33 // Default trigger interval in milliseconds (30 FPS)
+    };
+
+    println!("Camera trigger publisher started with interval: {}ms", trigger_interval_ms);
+    println!("Usage: {} [trigger_interval_ms]", args[0]);
+    println!("Publishing hardware timestamps for multiple cameras...");
+
     let node = NodeBuilder::new().create::<ipc::Service>()?;
 
     // Create service with QoS settings optimized for camera sync
@@ -57,7 +70,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                  hardware_timestamp_ns,
                  publish_timestamp_ns.saturating_sub(hardware_timestamp_ns));
 
-        // Simulate trigger rate (e.g., 30 FPS = ~33ms intervals)
-        std::thread::sleep(Duration::from_millis(33));
+        // Simulate configurable trigger rate
+        std::thread::sleep(Duration::from_millis(trigger_interval_ms));
     }
 }

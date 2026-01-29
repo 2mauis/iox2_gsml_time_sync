@@ -45,6 +45,18 @@ Sensor   Hardware     Kernel Space   User Space  Reuse
 
 ## V4L2 Buffer Configuration
 
+**Configurable Parameters**:
+```bash
+# Publisher: Set trigger interval (milliseconds)
+cargo run --bin publisher [trigger_interval_ms]
+# Default: 33ms (30 FPS), Example: 17ms (60 FPS), 2ms (500 FPS)
+
+# Subscriber: Set V4L2 processing delay (milliseconds)
+cargo run --bin subscriber [v4l2_delay_ms]
+# Default: 150ms, Example: 110ms (your case), 50ms (fast camera)
+```
+
+**Typical V4L2 buffer setup**:
 ```c
 // Typical V4L2 buffer setup
 struct v4l2_requestbuffers reqbuf;
@@ -103,6 +115,10 @@ Available Triggers:
   - Trigger C: hw_ts = 1183ms (future, 33ms difference, score = 66ms, but penalized)
 
 Result: Frame matches Trigger B (hw_ts = 1050ms) - accurate exposure time!
+
+Run with your parameters:
+cargo run --bin publisher 33  # 30fps = 33ms intervals
+cargo run --bin subscriber 110 # 110ms V4L2 delay
 ```
 
 **Critical Fix**: Original algorithm only looked for future triggers, which fails when V4L2 delay > trigger interval (e.g., 110ms delay with 33ms intervals creates 3+ future candidates, causing wrong matches).
