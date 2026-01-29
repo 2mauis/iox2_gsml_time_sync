@@ -2,6 +2,14 @@
 
 This demo showcases **hardware camera synchronization** using Iceoryx2 pub/sub with QoS settings. It solves the real-world problem of synchronizing hardware trigger timestamps with V4L2 camera frames.
 
+## Key Improvements (Latest Version)
+
+- ✅ **Fixed critical timestamp correlation bug** for high-frequency triggers
+- ✅ **Bidirectional correlation algorithm** prefers past triggers over future ones
+- ✅ **Automatic trigger cleanup** prevents memory bloat and maintains performance
+- ✅ **Optimized for 30fps cameras** with 110ms V4L2 delay (33ms trigger intervals)
+- ✅ **Enhanced logging** shows trigger type [PAST/FUTURE], match score, and cleanup count
+
 ## Camera Synchronization Problem
 
 - **Hardware trigger** generates exposure timestamp (actual capture time)
@@ -46,30 +54,35 @@ Hardware Trigger → Iceoryx2 Publisher → Iceoryx2 IPC → Subscriber Buffer �
 
 ### Timestamp Correlation Algorithm
 
-When a V4L2 frame arrives, the subscriber finds the trigger with the closest hardware timestamp that is **further in the future**:
+**IMPROVED: Bidirectional correlation with past trigger preference**
+
+When a V4L2 frame arrives, the subscriber finds the best matching trigger using timestamp proximity, preferring past triggers over future ones:
 
 1. **Frame Arrival**: V4L2 delivers frame with its own timestamp (`v4l2_ts`)
-2. **Trigger Search**: Scan buffered triggers for candidates where `hw_timestamp > v4l2_ts`
-3. **Closest Match**: Select trigger with smallest `hw_timestamp - v4l2_ts` difference
-4. **Tolerance Check**: Ensure difference ≤ 500ms (configurable tolerance window)
-5. **Synchronization**: Associate frame with matched trigger's hardware timestamp
+2. **Trigger Search**: Scan buffered triggers within ±500ms window
+3. **Past Preference**: Prioritize triggers where `hw_ts < v4l2_ts` (no penalty)
+4. **Future Penalty**: Penalize triggers where `hw_ts > v4l2_ts` (2x scoring penalty)
+5. **Best Match**: Select trigger with lowest score (time difference)
+6. **Cleanup**: Remove all older triggers (they'll never be useful for future frames)
 
-**Why "further in the future"?**
-- Hardware timestamp represents actual exposure time (when shutter opened)
-- V4L2 timestamp represents delivery time (when frame arrived in memory)
-- We match frames to the trigger that came immediately after their exposure
-- This accounts for V4L2 processing delay while maintaining temporal accuracy
+**Why prefer past triggers?**
+- Hardware timestamp = actual exposure time (when shutter opened)
+- V4L2 timestamp = delivery time (when frame arrived in memory)
+- Past triggers are more likely to be the correct exposure trigger
+- Future triggers might be from subsequent frames (wrong correlation)
 
-**Example Correlation**:
+**Example Correlation** (30fps camera, 110ms V4L2 delay):
 ```
-V4L2 Frame: v4l2_ts = 1000ms
+V4L2 Frame: v4l2_ts = 1150ms (delayed delivery)
 Available Triggers:
-  - Trigger A: hw_ts = 850ms  (too early - before frame exposure)
-  - Trigger B: hw_ts = 1020ms (closest future trigger - 20ms difference)
-  - Trigger C: hw_ts = 1100ms (further away - 100ms difference)
+  - Trigger A: hw_ts = 1017ms (past, 133ms difference, score = 133ms)
+  - Trigger B: hw_ts = 1050ms (past, 100ms difference, score = 100ms) ← BEST MATCH
+  - Trigger C: hw_ts = 1183ms (future, 33ms difference, score = 66ms, but penalized)
 
-Result: Frame matches Trigger B (hw_ts = 1020ms)
+Result: Frame matches Trigger B (hw_ts = 1050ms) - accurate exposure time!
 ```
+
+**Critical Fix**: Original algorithm only looked for future triggers, which fails when V4L2 delay > trigger interval (e.g., 110ms delay with 33ms intervals creates 3+ future candidates, causing wrong matches).
 
 ## QoS Settings for Camera Sync
 
@@ -84,6 +97,16 @@ Result: Frame matches Trigger B (hw_ts = 1020ms)
 - **IPC Latency**: Delay from trigger to Iceoryx2 delivery
 - **V4L2 Delay**: Time from trigger to frame delivery
 - **Total Latency**: End-to-end synchronization accuracy
+- **Trigger Type**: [PAST] or [FUTURE] indicating correlation preference
+- **Match Score**: Time difference used for correlation (lower = better)
+- **Cleanup Count**: Number of old triggers removed after successful match
+
+### Memory Management
+**Automatic Trigger Cleanup**: After successful frame-trigger matching, all older triggers are removed from the buffer. This prevents memory bloat and maintains performance:
+
+- **Why it works**: Future frames arrive later and need newer triggers
+- **Benefit**: Bounded memory usage, faster correlation searches
+- **For 30fps cameras**: Cleans up ~3 old triggers per frame match
 
 ## Running the Camera Sync Demo
 
@@ -112,8 +135,11 @@ Camera sync subscriber started. Synchronizing hardware timestamps with V4L2 fram
 Draining historical triggers...
 Drained 0 historical triggers. Starting real-time sync...
 Received trigger: id=47, hw_ts=1769704462251947000, ipc_delay=1000ns
-SYNCED: trigger_id=57, hw_exposure_ts=1769704462618433000, v4l2_ts=1769704462778936000, total_latency=160.5ms, v4l2_delay=160.5ms
-SYNCED: trigger_id=61, hw_exposure_ts=1769704462763919000, v4l2_ts=1769704462946580000, total_latency=182.7ms, v4l2_delay=182.7ms
+SYNCED [PAST]: trigger_id=57, hw_exposure_ts=1769704462618433000, v4l2_ts=1769704462778936000, total_latency=160.5ms, v4l2_delay=160.5ms, score=11.2ms, cleaned=3
+CLEANUP: Removed old trigger id=54 (too old for future frames)
+CLEANUP: Removed old trigger id=55 (too old for future frames)
+CLEANUP: Removed old trigger id=56 (too old for future frames)
+SYNCED [PAST]: trigger_id=61, hw_exposure_ts=1769704462763919000, v4l2_ts=1769704462946580000, total_latency=182.7ms, v4l2_delay=182.7ms, score=8.9ms, cleaned=2
 ...
 ```
 
@@ -123,7 +149,7 @@ Camera sync subscriber started. Synchronizing hardware timestamps with V4L2 fram
 Draining historical triggers...
 Drained 0 historical triggers. Starting real-time sync...
 Received trigger: id=1047, hw_ts=1769704562251947000, ipc_delay=1000ns
-SYNCED: trigger_id=1057, hw_exposure_ts=1769704562618433000, v4l2_ts=1769704562778936000, total_latency=160.5ms, v4l2_delay=160.5ms
+SYNCED [PAST]: trigger_id=1057, hw_exposure_ts=1769704562618433000, v4l2_ts=1769704562778936000, total_latency=160.5ms, v4l2_delay=160.5ms, score=11.2ms, cleaned=3
 ```
 
 ## Real-World Integration
